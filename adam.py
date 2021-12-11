@@ -44,7 +44,7 @@ def load_data_mnist():
   # y_test = to_categorical(y_test)
   X = np.vstack((x_train, x_test))
   y = np.hstack((y_train, y_test))
-  x_train, x_test, y_train, y_test = train_test_split(X[1:2000], y[1:2000], test_size=0.5, stratify=y[1:2000])
+  x_train, x_test, y_train, y_test = train_test_split(X[1:2000], y[1:2000], test_size=0.3, stratify=y[1:2000])
   y_train = to_categorical(y_train)
   y_test = to_categorical(y_test)
   x_test = np.reshape(x_test, (x_test.shape[0], 784))/255.
@@ -75,7 +75,7 @@ datagen = data_augmentation(x_train_aug)
 
 # Topological parameters
 window_size = 40
-max_layers = 2+2 # con 5 capas al principio no funciona
+max_layers = 2+5 # con 5 capas al principio no funciona
 num_max_units = 128
 # input_dim = window_size
 input_dim = 28*28
@@ -95,7 +95,7 @@ net = FluidNetwork(layers)
 
 # Training parameters
 batch_size = 128
-epochs = 3000 # necesitaria algunas más
+epochs = 6000 # necesitaria algunas más
 steps_per_epoch = int(x_train.shape[0]/batch_size)
 lr = 1e-2
 trigger = 0.01
@@ -125,9 +125,6 @@ history = net.train(x_train, y_train, x_test, y_test, epochs, datagen,
 # import os
 # dir = os.path.dirname(os.path.abspath('adam.py'))
 
-# f = open('C:\\Users\\marta\\OneDrive - Universidad Pontificia Comillas\\MASTER IA', 'wb')
-# pickle.dump(net, f)
-# f.close()
 
 # plt.figure()
 # plt.plot(history['val_acc'])

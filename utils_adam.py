@@ -34,7 +34,7 @@ def load_data_mnist():
   # y_test = to_categorical(y_test)
   X = np.vstack((x_train, x_test))
   y = np.hstack((y_train, y_test))
-  x_train, x_test, y_train, y_test = train_test_split(X[1:2000], y[1:2000], test_size=0.5, stratify=y[1:2000])
+  x_train, x_test, y_train, y_test = train_test_split(X[1:2000], y[1:2000], test_size=0.3, stratify=y[1:2000])
   y_train = to_categorical(y_train)
   y_test = to_categorical(y_test)
   x_test = np.reshape(x_test, (x_test.shape[0], 784))/255.
@@ -112,7 +112,6 @@ class FluidNetwork:
 #-------------------------------------------------------------------------------   
   def update_params(self, lr, adam): # adam = 1 to perform adam optimizer
     if adam == 1:
-          optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
           # Adams parameters
           beta1 = 0.9
           beta2 = 0.999
@@ -183,9 +182,14 @@ class FluidNetwork:
 #-------------------------------------------------------------------------------    
   def update_keys(self):
     ini_list = {}
-    for i in range(1, net.L): ini_list[i] = i
+    for i in range(1, self.L): ini_list[i] = i
     self.b = dict(zip(ini_list, list(self.b.values())))    
     self.W = dict(zip(ini_list, list(self.W.values())))  
+    if self.adam == 1:
+        self.m_db = dict(zip(ini_list, list(self.m_db.values())))    
+        self.m_dW = dict(zip(ini_list, list(self.m_dW.values())))  
+        self.v_db = dict(zip(ini_list, list(self.v_db.values())))    
+        self.v_dW = dict(zip(ini_list, list(self.v_dW.values())))  
 #-------------------------------------------------------------------------------  
   def sample_distribution(self,param, layer, shape):
     'Param: W (1) /b (0), layer: number of weight, size: tensor shape'
@@ -650,7 +654,7 @@ class FluidNetwork:
     self.layers = self.new_topology
 #-------------------------------------------------------------------------------
   def train(self, x_train, y_train, x_test, y_test, epochs, datagen, batch_size, lr, trigger):
-      trigger_ag = np.array([100, 500, 1000, 1500, 2000])
+      trigger_ag = np.array([100, 500, 1000, 2000, 3000])
       history = {
           'val_loss':[],
           'train_loss':[],
@@ -712,7 +716,7 @@ class FluidNetwork:
               input_dim = self.num_features
               output_dim = self.num_classes
               n_stall_generations = 10
-              n_iters = 30
+              n_iters = 20
               sample_update = 0.1
               # Invoke GA class 
               net_algo = self.copy_actual_instance()
@@ -722,15 +726,35 @@ class FluidNetwork:
               # Save best NN & update params
               best_NN = algo.best_NN
               self.layers = best_NN.layers
+              prev_L = self.L
               self.L = len(self.layers) # input, hidden & output layer
-              for i in range(1, self.L):
-                self.W[i].assign(best_NN.W[i])
-                self.b[i].assign(best_NN.b[i])
-                if self.adam:
-                    self.m_dW[i].assign(best_NN.m_dW[i])
-                    self.v_dW[i].assign(best_NN.v_dW[i])
-                    self.m_db[i].assign(best_NN.m_db[i])
-                    self.v_db[i].assign(best_NN.v_db[i])
+              for i in range(1, np.max(self.L, prev_L)):
+                  if i <=(np.min(self.L, prev_L)):
+                    self.W[i].assign(best_NN.W[i])
+                    self.b[i].assign(best_NN.b[i])
+                    if self.adam:
+                        self.m_dW[i].assign(best_NN.m_dW[i])
+                        self.v_dW[i].assign(best_NN.v_dW[i])
+                        self.m_db[i].assign(best_NN.m_db[i])
+                        self.v_db[i].assign(best_NN.v_db[i])
+                  else:
+                      if self.L > prev_L:
+                        self.W[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) # to enable future modifications
+                        self.b[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) 
+                        self.W[i].assign(best_NN.W[i])
+                        self.b[i].assign(best_NN.b[i])
+                        if self.adam == 1:
+                          self.m_dW[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) # to enable future modifications
+                          self.m_db[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) 
+                          self.m_dW[i].assign(best_NN.m_dW[i])
+                          self.m_db[i].assign(best_NN.m_db[i])
+                          self.v_dW[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) # to enable future modifications
+                          self.v_db[i] = tf.Variable(1.0, shape=tf.TensorShape(None)) 
+                          self.v_dW[i].assign(best_NN.v_dW[i])
+                          self.v_db[i].assign(best_NN.v_db[i])
+                      elif self.L < prev_L:
+                         self.update_keys()
+                         break
       return history
 #-------------------------------------------------------------------------------
   def copy_actual_instance(self):
@@ -743,6 +767,7 @@ class FluidNetwork:
         copynet.v_dW[i].assign(self.v_dW[i])
         copynet.m_db[i].assign(self.m_db[i])
         copynet.v_db[i].assign(self.v_db[i])
+        copynet.t = 0 + 1 
     return copynet
 #-------------------------------------------------------------------------------
 
@@ -772,8 +797,8 @@ class GA():
     self.datagen = datagen
 #-------------------------------------------------------------------------------    
   def pop_initial(self):
-    # n_pop = int(np.ceil((self.input_dim * 50) / (5 + self.input_dim)))
-    n_pop = 15
+    n_pop = int(np.ceil((self.input_dim * 50) / (5 + self.input_dim)))
+    # n_pop = 10
     n_layers = np.random.randint(low=self.num_min_layers, high=self.num_max_layers, size=n_pop)
     
     pop_layers = [] # Pop of differents NN
@@ -814,7 +839,7 @@ class GA():
       # Training parameters
       batch_size = 128
       steps_per_epoch = int(x_train.shape[0]/batch_size)
-      lr = 3e-3
+      lr = 1e-2
       trigger = np.inf # to avoid an AG's trigger action
       # Training loop
       print(f'NN structure {i}/{self.n_pop}')
@@ -833,6 +858,7 @@ class GA():
 #-------------------------------------------------------------------------------
   def selection(self):
     pop_fitness =  self.pop_fitness
+    
     # Although the fitness values (accuracy) are normalised, as they are compared 
     # to a random threshold between 0-1 we rather apply a min-max scaler.
     fitness_pu = np.asarray(pop_fitness)
@@ -845,7 +871,7 @@ class GA():
       i = index[j]
       threshold = np.random.random()
       if fitness_pu[i] > threshold:
-        fathers_to_select.append(i-1)
+        fathers_to_select.append(i)
       j +=1
     return fathers_to_select
 #-------------------------------------------------------------------------------
@@ -853,7 +879,7 @@ class GA():
     threshold = np.random.random()
     if crossover_rate > threshold: # Then crossover operator is computed
       # Select crossover point that is not on the end of the string
-      c = self.permutation(2) # number of children
+      c = self.permutation2(2) # number of children
       # Wrap up all children
       # c1, c2 = list(c.values())
       return c
@@ -893,10 +919,44 @@ class GA():
               c[j].append(p2[idx])
       return c
 #-------------------------------------------------------------------------------
+  def permutation2(self, nchild):
+    c = {}
+    fathers_to_select = self.selection()
+    if len(fathers_to_select) < 2:
+      return []
+    else:
+      p1 = self.pop_layers_prev[fathers_to_select[0]]
+      p2 = self.pop_layers_prev[fathers_to_select[1]]
+      w_dW1 = np.abs(self.compute_db_weight(fathers_to_select[0]))
+      w_dW2 = np.abs(self.compute_db_weight(fathers_to_select[1]))
+      for j in range(2):
+        c[j] = []
+        if np.max([len(p1), len(p2)]) == self.num_min_layers:
+              n = self.num_min_layers
+        else:
+          n = np.random.randint(self.num_min_layers, (np.max([len(p1), len(p2)]))) # child's length
+        for i in range(n):
+          if i < min([len(p1)-1, len(p2)-1]):
+            idx = i
+            aux = np.argmin([w_dW1[idx], w_dW2[idx]])
+            if aux == 0:
+              c[j].append(p1[idx])
+            else:
+              c[j].append(p2[idx])
+          else:
+            if len(p1) > len(p2):
+              idx = i
+              c[j].append(p1[idx])
+            else:
+              idx = i
+              c[j].append(p2[idx])
+      return c
+#-------------------------------------------------------------------------------
   def mutation(self, mutation_rate):
     threshold = np.random.random()
     if threshold < mutation_rate:
-       n_mut_pop = np.int(self.n_pop*mutation_rate)
+       # n_mut_pop = np.int(self.n_pop*mutation_rate)
+       n_mut_pop = 1
        return np.random.randint(low=self.num_min_layers, high=self.num_max_layers, size=n_mut_pop)
     else:
        return []
@@ -938,8 +998,7 @@ class GA():
        if iters >= max_iters:
            break
        iters += 1
-       epochs = 10 + iters*4
-       pop_fitness = self.fitness(epochs) # numero de entrenamiento gradual con la iteracion, a mayor iteracion mayor epocas
+       pop_fitness = self.fitness(10) # numero de entrenamiento gradual con la iteracion, a mayor iteracion mayor epocas
        if self.best_fitness < max(pop_fitness):
          self.best_fitness = max(pop_fitness)
          max_index = pop_fitness.index(self.best_fitness)
